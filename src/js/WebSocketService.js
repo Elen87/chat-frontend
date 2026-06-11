@@ -1,6 +1,6 @@
-
-const WS_URL = 'ws://localhost:3000';
-const API_URL = 'http://localhost:3000';
+// Railway сервер
+const WS_URL = 'wss://chat-backend-production-83ec.up.railway.app';
+const API_URL = 'https://chat-backend-production-83ec.up.railway.app';
 
 export default class WebSocketService {
   constructor() {
