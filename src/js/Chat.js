@@ -1,37 +1,22 @@
-import Modal from './Modal';
+
 import WebSocketService from './WebSocketService';
+import MessageList from './MessageList';
+import UsersList from './UsersList';
+import MessageForm from './MessageForm';
+import Modal from './Modal';
 
 export default class Chat {
-  constructor(container) {
+  constructor(container, wsService) {
     this.container = container;
-    this.wsService = new WebSocketService();
+    this.wsService = wsService;
+    this.messageList = null;
+    this.usersList = null;
+    this.messageForm = null;
     this.currentUser = null;
-    this.users = [];
-    this.setupCallbacks();
-  }
-
-  setupCallbacks() {
-    this.wsService.onMessage = (message) => {
-      this.addMessageToUI(message);
-    };
     
-    this.wsService.onUsersUpdate = (users) => {
-      this.users = users;
-      this.updateUsersList();
-    };
-    
-    this.wsService.onOpen = () => {
-      console.log('Connected to server');
-    };
-    
-    this.wsService.onClose = () => {
-      this.showConnectionStatus('Соединение потеряно. Перезагрузите страницу.');
-    };
-    
-    this.wsService.onError = (error) => {
-      console.error('Connection error:', error);
-      this.showConnectionStatus('Ошибка подключения к серверу');
-    };
+    // Подписываемся на события WebSocket
+    this.wsService.onMessage = this.handleNewMessage.bind(this);
+    this.wsService.onUsersUpdate = this.handleUsersUpdate.bind(this);
   }
 
   init() {
@@ -41,37 +26,27 @@ export default class Chat {
   showNicknameModal() {
     const modal = new Modal({
       title: 'Выберите псевдоним',
-      onSubmit: (nickname) => {
-        this.registerUser(nickname);
-      },
+      onSubmit: (nickname) => this.registerUser(nickname),
     });
     modal.show();
-    this.currentModal = modal;
+    this.modal = modal;
   }
 
-  registerUser(nickname) {
-    this.wsService.registerUser(nickname)
-      .then(result => {
-        if (result.status === 'ok') {
-          this.currentUser = result.user;
-          this.wsService.setCurrentUser(this.currentUser);
-          this.wsService.connect();
-          this.renderChatUI();
-          if (this.currentModal) {
-            this.currentModal.hide();
-          }
-        } else {
-          if (this.currentModal) {
-            this.currentModal.showError(result.message || 'Это имя уже занято!');
-          }
-        }
-      })
-      .catch(error => {
-        console.error('Registration error:', error);
-        if (this.currentModal) {
-          this.currentModal.showError('Ошибка соединения с сервером');
-        }
-      });
+  async registerUser(nickname) {
+    try {
+      const result = await this.wsService.registerUser(nickname);
+      if (result.status === 'ok') {
+        this.currentUser = result.user;
+        this.wsService.setCurrentUser(this.currentUser);
+        this.wsService.connect();
+        this.renderChatUI();
+        this.modal.hide();
+      } else {
+        this.modal.showError(result.message || 'Это имя уже занято!');
+      }
+    } catch (error) {
+      this.modal.showError('Ошибка соединения с сервером');
+    }
   }
 
   renderChatUI() {
@@ -88,11 +63,11 @@ export default class Chat {
     usersHeader.className = 'users-header';
     usersHeader.textContent = 'Участники';
     
-    this.usersList = document.createElement('div');
-    this.usersList.className = 'users-list';
+    const usersListContainer = document.createElement('div');
+    usersListContainer.className = 'users-list';
     
     usersPanel.appendChild(usersHeader);
-    usersPanel.appendChild(this.usersList);
+    usersPanel.appendChild(usersListContainer);
     
     // Основная область чата
     const chatMain = document.createElement('div');
@@ -102,121 +77,43 @@ export default class Chat {
     chatHeader.className = 'chat-header';
     chatHeader.textContent = `Чат • ${this.currentUser.name}`;
     
-    this.messagesArea = document.createElement('div');
-    this.messagesArea.className = 'messages-area';
+    const messagesContainer = document.createElement('div');
+    messagesContainer.className = 'messages-area';
     
-    const inputArea = document.createElement('div');
-    inputArea.className = 'input-area';
-    
-    this.messageInput = document.createElement('input');
-    this.messageInput.type = 'text';
-    this.messageInput.placeholder = 'Введите сообщение...';
-    this.messageInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') {
-        this.sendMessage();
-      }
-    });
-    
-    const sendBtn = document.createElement('button');
-    sendBtn.textContent = 'Отправить';
-    sendBtn.addEventListener('click', () => this.sendMessage());
-    
-    inputArea.appendChild(this.messageInput);
-    inputArea.appendChild(sendBtn);
+    const inputContainer = document.createElement('div');
+    inputContainer.className = 'input-area-placeholder';
     
     chatMain.appendChild(chatHeader);
-    chatMain.appendChild(this.messagesArea);
-    chatMain.appendChild(inputArea);
+    chatMain.appendChild(messagesContainer);
+    chatMain.appendChild(inputContainer);
     
     chatContainer.appendChild(usersPanel);
     chatContainer.appendChild(chatMain);
-    
     this.container.appendChild(chatContainer);
     
-    // Обработка закрытия страницы
-    window.addEventListener('beforeunload', () => {
-      this.wsService.exitUser();
-    });
-  }
-
-  updateUsersList() {
-    if (!this.usersList) return;
+    // Инициализация компонентов
+    this.messageList = new MessageList(messagesContainer);
+    this.messageList.setCurrentUser(this.currentUser);
     
-    this.usersList.innerHTML = '';
-    this.users.forEach(user => {
-      const userItem = document.createElement('div');
-      userItem.className = 'user-item';
-      if (user.id === this.currentUser?.id) {
-        userItem.classList.add('active');
-      }
-      
-      const statusDot = document.createElement('div');
-      statusDot.className = 'user-status';
-      
-      const userName = document.createElement('div');
-      userName.className = 'user-name';
-      userName.textContent = user.name;
-      
-      userItem.appendChild(statusDot);
-      userItem.appendChild(userName);
-      this.usersList.appendChild(userItem);
-    });
-  }
-
-  addMessageToUI(message) {
-    if (!this.messagesArea) return;
+    this.usersList = new UsersList(usersListContainer);
+    this.usersList.setCurrentUserId(this.currentUser.id);
     
-    const isOwn = message.user.id === this.currentUser?.id;
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${isOwn ? 'message-own' : 'message-other'}`;
-    
-    const time = new Date().toLocaleTimeString('ru-RU', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-    
-    const date = new Date().toLocaleDateString('ru-RU', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
-    
-    const senderDiv = document.createElement('div');
-    senderDiv.className = 'message-sender';
-    senderDiv.textContent = isOwn ? `You, ${time} ${date}` : `${message.user.name}, ${time} ${date}`;
-    
-    const bubbleDiv = document.createElement('div');
-    bubbleDiv.className = 'message-bubble';
-    bubbleDiv.textContent = message.message;
-    
-    const timeDiv = document.createElement('div');
-    timeDiv.className = 'message-time';
-    timeDiv.textContent = time;
-    
-    messageDiv.appendChild(senderDiv);
-    messageDiv.appendChild(bubbleDiv);
-    messageDiv.appendChild(timeDiv);
-    
-    this.messagesArea.appendChild(messageDiv);
-    this.messagesArea.scrollTop = this.messagesArea.scrollHeight;
-  }
-
-  sendMessage() {
-    const text = this.messageInput.value.trim();
-    if (text && this.currentUser) {
+    this.messageForm = new MessageForm(inputContainer, (text) => {
       this.wsService.sendMessage(text);
-      this.messageInput.value = '';
-      this.messageInput.focus();
+    });
+    
+    this.messageForm.focus();
+  }
+
+  handleNewMessage(message) {
+    if (this.messageList) {
+      this.messageList.addMessage(message);
     }
   }
 
-  showConnectionStatus(message) {
-    const statusDiv = document.createElement('div');
-    statusDiv.className = 'connection-status';
-    statusDiv.textContent = message;
-    if (this.container) {
-      this.container.insertBefore(statusDiv, this.container.firstChild);
-      setTimeout(() => statusDiv.remove(), 3000);
+  handleUsersUpdate(users) {
+    if (this.usersList) {
+      this.usersList.updateUsers(users);
     }
   }
 

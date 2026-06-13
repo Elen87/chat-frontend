@@ -1,49 +1,71 @@
-// Railway сервер
-const WS_URL = 'wss://chat-backend-production-83ec.up.railway.app';
-const API_URL = 'https://chat-backend-production-83ec.up.railway.app';
+
+const WS_URL = 'ws://localhost:3000';
+const API_URL = 'http://localhost:3000';
 
 export default class WebSocketService {
   constructor() {
     this.ws = null;
+    this.currentUser = null;
+    // Подписки на события
     this.onMessage = null;
     this.onUsersUpdate = null;
-    this.onOpen = null;
-    this.onClose = null;
-    this.onError = null;
-    this.currentUser = null;
+    this.onConnectionChange = null;
   }
 
   connect() {
-    console.log(`Connecting to ${WS_URL}...`);
     this.ws = new WebSocket(WS_URL);
     
     this.ws.onopen = () => {
-      console.log('WebSocket connected');
-      if (this.onOpen) this.onOpen();
+      console.log('Connected to server');
+      if (this.onConnectionChange) this.onConnectionChange(true);
     };
     
     this.ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (Array.isArray(data)) {
-          if (this.onUsersUpdate) this.onUsersUpdate(data);
-        } else {
-          if (this.onMessage) this.onMessage(data);
+      // 🔧 ФИКС: Проверяем тип данных перед парсингом
+      let data;
+      if (event.data instanceof Blob) {
+        // Если пришёл Blob, преобразуем в строку
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            data = JSON.parse(reader.result);
+            this.handleMessage(data);
+          } catch (e) {
+            console.error('Error parsing blob message:', e);
+          }
+        };
+        reader.readAsText(event.data);
+      } else if (typeof event.data === 'string') {
+        try {
+          data = JSON.parse(event.data);
+          this.handleMessage(data);
+        } catch (e) {
+          console.error('Error parsing message:', e);
         }
-      } catch (e) {
-        console.error('Error parsing message:', e);
+      } else {
+        console.warn('Unknown message type:', typeof event.data);
       }
     };
     
     this.ws.onclose = () => {
-      console.log('WebSocket disconnected');
-      if (this.onClose) this.onClose();
+      console.log('Disconnected from server');
+      if (this.onConnectionChange) this.onConnectionChange(false);
     };
     
     this.ws.onerror = (error) => {
       console.error('WebSocket error:', error);
-      if (this.onError) this.onError(error);
+      if (this.onConnectionChange) this.onConnectionChange(false);
     };
+  }
+
+  handleMessage(data) {
+    if (Array.isArray(data)) {
+      // Список пользователей
+      if (this.onUsersUpdate) this.onUsersUpdate(data);
+    } else if (data.type === 'send') {
+      // Обычное сообщение
+      if (this.onMessage) this.onMessage(data);
+    }
   }
 
   disconnect() {
@@ -55,9 +77,7 @@ export default class WebSocketService {
   async registerUser(name) {
     const response = await fetch(`${API_URL}/new-user`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
     });
     
